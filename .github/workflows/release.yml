@@ -24,7 +24,7 @@ jobs:
         include:
           - target: arm-unknown-linux-musleabihf
             os: ubuntu-latest
-            name: mecha-wifi-arm-unknown-linux-musleabihf.tar.gz
+            name: wifi-ctrl-arm-unknown-linux-musleabihf.tar.gz
 
     runs-on: ${{ matrix.os }}
     continue-on-error: true
@@ -54,7 +54,7 @@ jobs:
         if: matrix.os != 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
-          tar czvf ../../../${{ matrix.name }} mecha-wifi
+          tar czvf ../../../${{ matrix.name }} wifi-ctrl
           cd -
       - name: Release | Upload artifacts
         uses: actions/upload-artifact@v3
@@ -80,5 +80,5 @@ jobs:
       - name: Build | Add Artifacts to Release
         uses: softprops/action-gh-release@v1
         with:
-          files: mecha-wifi-*/mecha-wifi-*
+          files: wifi-ctrl-*/wifi-ctrl-*
           tag_name: ${{ github.sha}}
