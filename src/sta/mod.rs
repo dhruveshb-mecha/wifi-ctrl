@@ -153,6 +153,9 @@ impl WifiStation {
                     sender.send(Ok(SelectResult::WrongPsk));
                 }
             }
+            Event::Unknown(msg) => {
+                broadcast_sender.send(Broadcast::Unknown(msg))?;
+            }
         }
         Ok(())
     }
@@ -173,6 +176,15 @@ impl WifiStation {
     ) -> Result {
         debug!("Handling request: {request:?}");
         match request {
+            Request::Custom(custom, response_channel) => {
+                let _n = socket_handle.socket.send(custom.as_bytes()).await?;
+                let n = socket_handle.socket.recv(&mut socket_handle.buffer).await?;
+                let data_str = std::str::from_utf8(&socket_handle.buffer[..n])?.trim_end();
+                debug!("Custom request response: {data_str}");
+                if response_channel.send(Ok(data_str.into())).is_err() {
+                    error!("Custom request response channel closed before response sent");
+                }
+            }
             Request::SelectTimeout => {
                 if let Some(sender) = select_request.take() {
                     sender.send(Ok(SelectResult::Timeout));
@@ -216,8 +228,9 @@ impl WifiStation {
                     "SET_NETWORK {id} {}",
                     match param {
                         SetNetwork::Ssid(ssid) => format!("ssid \"{ssid}\""),
+                        SetNetwork::Bssid(bssid) => format!("bssid \"{bssid}\""),
                         SetNetwork::Psk(psk) => format!("psk \"{psk}\""),
-                        SetNetwork::KeyMgmt(mgmt) => format!("key_mgmt {}", mgmt.to_string()),
+                        SetNetwork::KeyMgmt(mgmt) => format!("key_mgmt {}", mgmt),
                     }
                 );
                 debug!("wpa_ctrl \"{cmd}\"");
@@ -234,13 +247,17 @@ impl WifiStation {
                 debug!("wpa_ctrl config saved");
                 let _ = response.send(Ok(()));
             }
-            Request::RemoveNetwork(id, response) => {
-                let cmd = format!("REMOVE_NETWORK {id}");
+            Request::RemoveNetwork(remove_network, response) => {
+                let str = match remove_network {
+                    RemoveNetwork::All => "all".to_string(),
+                    RemoveNetwork::Id(id) => id.to_string(),
+                };
+                let cmd = format!("REMOVE_NETWORK {str}");
                 let bytes = cmd.into_bytes();
                 if let Err(e) = socket_handle.command(&bytes).await {
-                    warn!("Error while removing network {id}: {e}");
+                    warn!("Error while removing network {str}: {e}");
                 }
-                debug!("wpa_ctrl removed network {id}");
+                debug!("wpa_ctrl removed network {str}");
                 let _ = response.send(Ok(()));
             }
             Request::SelectNetwork(id, response_sender) => {

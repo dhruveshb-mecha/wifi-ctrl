@@ -36,14 +36,21 @@ impl fmt::Display for SelectResult {
 }
 
 #[derive(Debug)]
+pub(crate) enum RemoveNetwork {
+    Id(usize),
+    All,
+}
+
+#[derive(Debug)]
 pub(crate) enum Request {
+    Custom(String, oneshot::Sender<Result<String>>),
     Status(oneshot::Sender<Result<Status>>),
     Networks(oneshot::Sender<Result<Vec<NetworkResult>>>),
     Scan(oneshot::Sender<Result<ScanResults>>),
     AddNetwork(oneshot::Sender<Result<usize>>),
     SetNetwork(usize, SetNetwork, oneshot::Sender<Result>),
     SaveConfig(oneshot::Sender<Result>),
-    RemoveNetwork(usize, oneshot::Sender<Result>),
+    RemoveNetwork(RemoveNetwork, oneshot::Sender<Result>),
     SelectNetwork(usize, oneshot::Sender<Result<SelectResult>>),
     Shutdown,
     SelectTimeout,
@@ -55,6 +62,9 @@ impl ShutdownSignal for Request {
     }
     fn inform_of_shutdown(self) {
         match self {
+            Request::Custom(_, response) => {
+                let _ = response.send(Err(error::Error::StartupAborted));
+            }
             Request::Status(response) => {
                 let _ = response.send(Err(error::Error::StartupAborted));
             }
@@ -88,6 +98,7 @@ impl ShutdownSignal for Request {
 #[derive(Debug)]
 pub(crate) enum SetNetwork {
     Ssid(String),
+    Bssid(String),
     Psk(String),
     KeyMgmt(KeyMgmt),
 }
@@ -109,6 +120,12 @@ impl RequestClient {
             .await
             .map_err(|_| error::Error::WifiStationRequestChannelClosed)?;
         Ok(())
+    }
+
+    pub async fn send_custom(&self, custom: String) -> Result<String> {
+        let (response, request) = oneshot::channel();
+        self.send_request(Request::Custom(custom, response)).await?;
+        request.await?
     }
 
     pub async fn get_scan(&self) -> Result<Arc<Vec<ScanResult>>> {
@@ -157,6 +174,17 @@ impl RequestClient {
         request.await?
     }
 
+    pub async fn set_network_bssid(&self, network_id: usize, bssid: String) -> Result {
+        let (response, request) = oneshot::channel();
+        self.send_request(Request::SetNetwork(
+            network_id,
+            SetNetwork::Bssid(bssid),
+            response,
+        ))
+        .await?;
+        request.await?
+    }
+
     pub async fn set_network_keymgmt(&self, network_id: usize, mgmt: KeyMgmt) -> Result {
         let (response, request) = oneshot::channel();
         self.send_request(Request::SetNetwork(
@@ -174,9 +202,16 @@ impl RequestClient {
         request.await?
     }
 
-    pub async fn remove_network(&self, network_id: usize) -> Result {
+    pub async fn remove_network(&self, id: usize) -> Result {
         let (response, request) = oneshot::channel();
-        self.send_request(Request::RemoveNetwork(network_id, response))
+        self.send_request(Request::RemoveNetwork(RemoveNetwork::Id(id), response))
+            .await?;
+        request.await?
+    }
+
+    pub async fn remove_all_networks(&self) -> Result {
+        let (response, request) = oneshot::channel();
+        self.send_request(Request::RemoveNetwork(RemoveNetwork::All, response))
             .await?;
         request.await?
     }
@@ -202,6 +237,7 @@ pub enum Broadcast {
     NetworkNotFound,
     WrongPsk,
     Ready,
+    Unknown(String),
 }
 
 /// Channel for broadcasting events. Subscribing to this channel is equivalent to
